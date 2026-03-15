@@ -1,0 +1,108 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: events
+    // Document ID: auto-generated
+    // Fields:
+    //   - title: string (required, < 100 chars)
+    //   - description: string (required, < 1000 chars)
+    //   - date: timestamp (required)
+    //   - location: string (required, < 100 chars)
+    //   - price: number (required, >= 0)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: registrations
+    // Document ID: auto-generated
+    // Fields:
+    //   - eventId: string (required, < 50 chars)
+    //   - eventName: string (required, < 100 chars)
+    //   - name: string (required, < 100 chars)
+    //   - email: string (required, valid email)
+    //   - phone: string (required, < 20 chars)
+    //   - status: string (required, 'paid' | 'unpaid')
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == "rick.van.rijsewijk@gmail.com" && request.auth.token.email_verified == true
+      );
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidEvent(data) {
+      return hasOnlyAllowedFields(['title', 'description', 'date', 'location', 'price', 'createdAt']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 100 &&
+             data.description is string && data.description.size() > 0 && data.description.size() < 1000 &&
+             data.date is timestamp &&
+             data.location is string && data.location.size() > 0 && data.location.size() < 100 &&
+             data.price is number && data.price >= 0 &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidRegistration(data) {
+      return hasOnlyAllowedFields(['eventId', 'eventName', 'name', 'email', 'phone', 'status', 'createdAt']) &&
+             data.eventId is string && data.eventId.size() > 0 && data.eventId.size() < 50 &&
+             data.eventName is string && data.eventName.size() > 0 && data.eventName.size() < 100 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.phone is string && data.phone.size() > 0 && data.phone.size() < 20 &&
+             data.status in ['paid', 'unpaid'] &&
+             data.createdAt is timestamp;
+    }
+
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /events/{eventId} {
+      // Anyone can read events
+      allow read: if true;
+      
+      // Only admins can create, update, or delete events
+      allow create: if isAdmin() && isValidEvent(request.resource.data);
+      allow update: if isAdmin() && isValidEvent(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+      allow delete: if isAdmin();
+    }
+
+    match /registrations/{registrationId} {
+      // Anyone can create a registration
+      allow create: if isValidRegistration(request.resource.data) && request.resource.data.status == 'unpaid';
+      
+      // Only admins can read, update, or delete registrations
+      allow read, delete: if isAdmin();
+      allow update: if isAdmin() && isValidRegistration(request.resource.data) && areImmutableFieldsUnchanged(['createdAt']);
+    }
+  }
+}
